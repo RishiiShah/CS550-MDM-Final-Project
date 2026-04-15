@@ -1,0 +1,40 @@
+{
+  "rating_prediction": {
+    "MAE": 0.7648710169437346,
+    "RMSE": 1.0751501708598503
+  },
+  "rating_prediction_mf": {
+    "MAE": 0.7648710169437346,
+    "RMSE": 1.0751501708598503
+  },
+  "rating_prediction_svdpp": {
+    "MAE": 0.85095055532298,
+    "RMSE": 1.1207872921931077
+  },
+  "recommendation_bpr": {
+    "Precision@K": 0.0007732705541470482,
+    "Recall@K": 0.00479623409413529,
+    "F-measure": 0.0012177133541024152,
+    "NDCG@K": 0.002051374521570404
+  },
+  "recommendation_slim": {
+    "Precision@K": 0.010282506338283232,
+    "Recall@K": 0.07733303266049425,
+    "F-measure": 0.01733823506519898,
+    "NDCG@K": 0.047086767571397424
+  },
+  "recommendation_hybrid": {
+    "Precision@K": 0.010316914161535677,
+    "Recall@K": 0.07768373601504,
+    "F-measure": 0.017393247390323757,
+    "NDCG@K": 0.04712114012061971
+  },
+  "recommendation": {
+    "Precision@K": 0.010282506338283232,
+    "Recall@K": 0.07733303266049425,
+    "F-measure": 0.01733823506519898,
+    "NDCG@K": 0.047086767571397424
+  },
+  "best_recommender": "SLIM (item-item ElasticNet)",
+  "best_rating_model": "MF (biased SGD-MF)"
+}
