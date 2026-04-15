@@ -3,7 +3,7 @@
 CS550 — Massive Data Mining and Learning | Final Project  
 Rishabh Sanjeev Shah rs2780   
 Om Nirav Patel op187  
-Vivek Sai Manthri vs  
+Vivek Sai Manthri vm614  
 Rutgers University
 
 ---
