@@ -1,9 +1,9 @@
 # Amazon Video Games Recommender System
 
 CS550 — Massive Data Mining and Learning | Final Project  
-Rishabh Sanjeev Shah rs2780
-Om Nirav Patel op187
-Vivek Sai Manthri vs
+Rishabh Sanjeev Shah rs2780   
+Om Nirav Patel op187  
+Vivek Sai Manthri vs  
 Rutgers University
 
 ---
