@@ -25,15 +25,15 @@ An interactive Flask demo (port 5001) exposes all models through four tabs: Reco
 |---|---|
 | Source | Amazon Video Games 5-core (McAuley et al.) |
 | File | `data/Video_Games_5.json.gz` |
-| Total records | 497,577 |
+| Total records | 497,565 |
 | Users | 55,220 |
-| Items | 17,386 |
+| Items | 17,408 |
 | Train ratings | 412,281 |
 | Test ratings | 85,284 |
-| Matrix density | 0.043% |
-| Avg ratings / user | 7.47 |
-| Avg ratings / item | 23.71 |
-| Avg rating value | 4.23 / 5 |
+| Matrix density | 0.0518% |
+| Avg ratings / user | 9.01 |
+| Avg ratings / item | 28.58 |
+| Avg rating value | 4.22 / 5 |
 
 **Split strategy**: per-user temporal split — the most recent 20% of each user's reviews form the test set. This prevents any future signal from leaking into training.
 
@@ -102,7 +102,7 @@ Hyperparameters: `max_features=5000`, `alpha=0.3`, `ngram_range=(1,2)`
 | **MF (primary)** | **0.7649** | **1.0752** |
 | SVD++ (baseline) | 0.8510 | 1.1208 |
 
-MF outperforms SVD++. With only ~7.5 ratings per user on average, the implicit feedback term in SVD++ has insufficient signal to generalise and adds noise instead of benefit.
+MF outperforms SVD++. With only ~9.0 ratings per user on average, the implicit feedback term in SVD++ has insufficient signal to generalise and adds noise instead of benefit.
 
 ### Task B — Top-10 Recommendation (higher is better)
 
@@ -120,9 +120,9 @@ SLIM dominates. The Video Games domain has strong item-item co-purchase patterns
 
 ## Sparsity Handling
 
-The rating matrix density is 0.043% — extremely sparse. Key mitigations:
+The rating matrix density is 0.0518% — extremely sparse. Key mitigations:
 
-- **5-core filtering**: only users and items with ≥ 5 interactions are retained
+- **5-core filtering (user-side)**: only users with ≥ 5 interactions are retained
 - **Temporal split**: avoids data leakage; models train on older interactions only
 - **SLIM item-item similarity**: captures co-purchase patterns even with sparse user histories
 - **Popularity fallback**: when SLIM's co-occurrence scores are all zero for a user (no overlap with any item's neighborhood), the recommendation list is padded with globally-popular unseen items — ensuring every user always receives exactly 10 recommendations
