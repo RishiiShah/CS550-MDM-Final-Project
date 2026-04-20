@@ -44,6 +44,14 @@ def _load(fname):
     with open(p, "rb") as f:
         return pickle.load(f)
 
+
+def _load_json(fname, default=None):
+    p = os.path.join(ARTIFACTS, fname)
+    if not os.path.exists(p):
+        return default
+    with open(p) as f:
+        return json.load(f)
+
 MF_MODEL          = _load("model.pkl")
 SVDPP_MODEL       = _load("svdpp_model.pkl")
 BPR_MODEL         = _load("bpr_model.pkl")
@@ -55,6 +63,7 @@ TEST_DF  = pd.read_csv(os.path.join(ARTIFACTS, "test.csv"))
 
 with open(os.path.join(ARTIFACTS, "results.json")) as f:
     RESULTS = json.load(f)
+RATING_BUNDLE = _load_json("rating_bundle.json", default={})
 
 # Pre-computed lookups
 ITEM_COUNTS = TRAIN_DF.groupby("item_id").size().to_dict()
@@ -133,6 +142,38 @@ def _compute_content_score(user_id: str, item_id: str):
     gm           = float(MF_MODEL.global_mean)
     content_score = float(np.clip(gm + sim * (5.0 - gm), 1.0, 5.0))
     return sim, content_score
+
+
+def _apply_calibration(score: float, key: str) -> float:
+    calib = RATING_BUNDLE.get("calibration", {})
+    params = calib.get(key, {})
+    a = float(params.get("a", 1.0))
+    b = float(params.get("b", 0.0))
+    return float(np.clip(a * score + b, 1.0, 5.0))
+
+
+def _predict_task_a_score(user_id: str, item_id: str, model_pref: str = "auto"):
+    mf_raw = float(MF_MODEL.predict_one(user_id, item_id)) if MF_MODEL else 3.5
+    svd_raw = float(SVDPP_MODEL.predict_one(user_id, item_id)) if SVDPP_MODEL else mf_raw
+    mf_cal = _apply_calibration(mf_raw, "mf")
+    svd_cal = _apply_calibration(svd_raw, "svdpp")
+    alpha = float(RATING_BUNDLE.get("calibration", {}).get("blend_alpha", 1.0))
+    blend = float(np.clip(alpha * mf_cal + (1.0 - alpha) * svd_cal, 1.0, 5.0))
+
+    pref = (model_pref or "auto").lower()
+    if pref == "mf":
+        return mf_cal, "MF"
+    if pref in {"svdpp", "svd++"}:
+        return svd_cal, "SVD++"
+    if pref == "blend":
+        return blend, "MF/SVD++ blend"
+
+    best = RATING_BUNDLE.get("best_rating_model", "")
+    if "blend" in best.lower():
+        return blend, "MF/SVD++ blend"
+    if "SVD++" in best:
+        return svd_cal, "SVD++"
+    return mf_cal, "MF"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -467,8 +508,8 @@ table.data-table td.num{text-align:right;font-variant-numeric:tabular-nums}
     <p style="font-size:.85rem;color:#4a5568;margin-bottom:16px">
       Evaluates popularity bias (do we over-recommend popular items?),
       catalogue coverage (how many items does the system surface?),
-      and user-group fairness (do active users get better recommendations?).
-      Based on SLIM recommendations for 50 sampled active users.
+      and user-group fairness parity (P@10 / R@10 / NDCG@10 across activity cohorts).
+      Based on SLIM recommendations for a stratified sample of up to 300 users.
     </p>
     <button class="primary" onclick="runFairness()">Run Analysis</button>
     <div id="fairness-result" style="margin-top:20px"></div>
@@ -684,7 +725,7 @@ async function runSampledEval() {
 // ── Tab 3: Fairness ───────────────────────────────────────────────────────────
 async function runFairness() {
   const box = document.getElementById('fairness-result');
-  box.innerHTML = loading('Computing fairness metrics (50 users)…');
+  box.innerHTML = loading('Computing fairness metrics (up to 300 stratified users)…');
   const resp = await fetch('/fairness');
   const data = await resp.json();
   if (data.error) { box.innerHTML = `<p style="color:red">${data.error}</p>`; return; }
@@ -706,16 +747,18 @@ async function runFairness() {
     </div>`;
   }).join('');
 
-  // Group fairness
-  const maxScore = Math.max(...data.groups.map(g => g.avg_score));
+  // Group fairness (ranking quality parity)
+  const maxNdcg = Math.max(...data.groups.map(g => g.ndcg));
   const groupRows = data.groups.map(g => {
-    const barW = maxScore > 0 ? Math.round(g.avg_score / maxScore * 120) : 0;
+    const barW = maxNdcg > 0 ? Math.round(g.ndcg / maxNdcg * 120) : 0;
     return `<tr>
       <td>${g.group}</td>
       <td>${g.n_users}</td>
+      <td class="num">${g.precision.toFixed(4)}</td>
+      <td class="num">${g.recall.toFixed(4)}</td>
       <td>
         <span class="group-bar" style="width:${barW}px"></span>
-        ${g.avg_score.toFixed(4)}
+        ${g.ndcg.toFixed(4)}
       </td>
     </tr>`;
   }).join('');
@@ -753,16 +796,16 @@ async function runFairness() {
 
     <h3 style="margin-top:20px">Recommendation Quality by User Activity Group</h3>
     <p style="font-size:.8rem;color:#718096;margin-bottom:12px">
-      A large gap (&gt;0.3) suggests the model under-serves cold-start users.
+      Gap is measured on NDCG@10 across groups.
     </p>
     <table class="data-table">
-      <thead><tr><th>Group</th><th>Users</th><th>Avg SLIM Score</th></tr></thead>
+      <thead><tr><th>Group</th><th>Users</th><th class="num">P@10</th><th class="num">R@10</th><th>NDCG@10</th></tr></thead>
       <tbody>${groupRows}</tbody>
     </table>
-    <p style="font-size:.8rem;margin-top:10px;color:${data.gap > 0.3 ? '#c05621' : '#276749'}">
-      ${data.gap > 0.3
-        ? '⚠ Score gap of ' + data.gap.toFixed(3) + ' — model may under-serve casual users.'
-        : '✓ Score gap of ' + data.gap.toFixed(3) + ' — within acceptable range.'}
+    <p style="font-size:.8rem;margin-top:10px;color:${data.gap > 0.02 ? '#c05621' : '#276749'}">
+      ${data.gap > 0.02
+        ? 'NDCG@10 gap of ' + data.gap.toFixed(4) + ' indicates activity-group disparity.'
+        : 'NDCG@10 gap of ' + data.gap.toFixed(4) + ' is relatively small.'}
     </p>`;
 }
 
@@ -995,9 +1038,6 @@ def recommend():
     user_id    = request.args.get("user_id", "")
     model_name = request.args.get("model", "slim")
 
-    if user_id not in (MF_MODEL.user2idx if MF_MODEL else {}):
-        return jsonify({"error": f"Unknown user: {user_id}"})
-
     seen       = TRAIN_SEEN.get(user_id, set())
     test_items = TEST_ITEMS.get(user_id, set())
 
@@ -1015,10 +1055,15 @@ def recommend():
         if not raw and BPR_MODEL:
             raw = BPR_MODEL.recommend(user_id, seen, n=TOP_K)
 
+    # Universal fallback for cold-start/empty-return paths.
+    if not raw and BPR_MODEL:
+        raw = BPR_MODEL.recommend(user_id, seen, n=TOP_K)
+
     recs = []
     for item_id, _ in raw:
         title   = str(ITEM_TITLES.get(item_id, item_id))[:80]
-        pred    = round(MF_MODEL.predict_one(user_id, item_id), 4) if MF_MODEL else 3.0
+        pred_score, _ = _predict_task_a_score(user_id, item_id, model_pref="auto")
+        pred = round(pred_score, 4)
         reviews = [str(r)[:300] for r in ITEM_REVIEWS.get(item_id, [])]
         recs.append({
             "item_id":          item_id,
@@ -1057,14 +1102,12 @@ def user_history():
 def predict():
     user_id    = request.args.get("user_id", "")
     item_id    = request.args.get("item_id", "")
-    model_name = request.args.get("model", "svdpp")
+    model_name = request.args.get("model", "auto")
 
-    if model_name == "svdpp" and SVDPP_MODEL:
-        score, label = SVDPP_MODEL.predict_one(user_id, item_id), "SVD++"
-    elif MF_MODEL:
-        score, label = MF_MODEL.predict_one(user_id, item_id), "MF"
-    else:
+    if MF_MODEL is None and SVDPP_MODEL is None:
         return jsonify({"error": "No rating model available"})
+
+    score, label = _predict_task_a_score(user_id, item_id, model_pref=model_name)
 
     return jsonify({"user_id": user_id, "item_id": item_id,
                     "predicted_rating": round(float(score), 4), "model": label})
@@ -1092,8 +1135,9 @@ def fairness():
     if SLIM_MODEL is None:
         return jsonify({"error": "SLIM model not available"})
 
-    # Sample ~17 users from each activity tier so all three groups are represented.
-    # ACTIVE_USERS is ≥10-rating only, so we build tier lists from TRAIN_SEEN directly.
+    from utils.evaluate import precision_at_k, recall_at_k, ndcg_at_k
+
+    # Stratified sampling so all activity tiers are represented.
     rng = np.random.default_rng(42)
     low_uids    = [u for u, s in TRAIN_SEEN.items() if len(s) <= 10]
     medium_uids = [u for u, s in TRAIN_SEEN.items() if 10 < len(s) <= 50]
@@ -1104,7 +1148,11 @@ def fairness():
     sampled_uids = _sample(low_uids, 100) + _sample(medium_uids, 100) + _sample(high_uids, 100)
 
     all_rec_items = []
-    group_scores  = {"Low (≤10 ratings)": [], "Medium (11–50)": [], "High (>50)": []}
+    group_metrics = {
+      "Low (≤10 ratings)": {"p": [], "r": [], "n": []},
+      "Medium (11–50)": {"p": [], "r": [], "n": []},
+      "High (>50)": {"p": [], "r": [], "n": []},
+    }
 
     for uid in sampled_uids:
         seen = TRAIN_SEEN.get(uid, set())
@@ -1112,14 +1160,24 @@ def fairness():
         items = [it for it, _ in recs]
         all_rec_items.extend(items)
 
-        avg_sc = float(np.mean([sc for _, sc in recs])) if recs else 0.0
+        relevant = TEST_ITEMS.get(uid, set())
+        p = precision_at_k(items, relevant, k=TOP_K)
+        r = recall_at_k(items, relevant, k=TOP_K)
+        n = ndcg_at_k(items, relevant, k=TOP_K)
+
         n_hist = len(seen)
         if n_hist <= 10:
-            group_scores["Low (≤10 ratings)"].append(avg_sc)
+          group_metrics["Low (≤10 ratings)"]["p"].append(p)
+          group_metrics["Low (≤10 ratings)"]["r"].append(r)
+          group_metrics["Low (≤10 ratings)"]["n"].append(n)
         elif n_hist <= 50:
-            group_scores["Medium (11–50)"].append(avg_sc)
+          group_metrics["Medium (11–50)"]["p"].append(p)
+          group_metrics["Medium (11–50)"]["r"].append(r)
+          group_metrics["Medium (11–50)"]["n"].append(n)
         else:
-            group_scores["High (>50)"].append(avg_sc)
+          group_metrics["High (>50)"]["p"].append(p)
+          group_metrics["High (>50)"]["r"].append(r)
+          group_metrics["High (>50)"]["n"].append(n)
 
     pop_all     = np.array(list(ITEM_COUNTS.values()), dtype=float)
     pop_rec     = np.array([ITEM_COUNTS.get(it, 1) for it in all_rec_items], dtype=float)
@@ -1144,13 +1202,19 @@ def fairness():
         for label, s in tier_sets
     ]
 
-    groups = [
-        {"group": g, "n_users": len(sc),
-         "avg_score": round(float(np.mean(sc)), 4) if sc else 0.0}
-        for g, sc in group_scores.items()
-    ]
-    scores = [g["avg_score"] for g in groups if g["n_users"] > 0]
-    gap = round(max(scores) - min(scores), 4) if len(scores) >= 2 else 0.0
+    groups = []
+    for g, m in group_metrics.items():
+      n_users = len(m["p"])
+      groups.append({
+        "group": g,
+        "n_users": n_users,
+        "precision": round(float(np.mean(m["p"])), 4) if n_users else 0.0,
+        "recall": round(float(np.mean(m["r"])), 4) if n_users else 0.0,
+        "ndcg": round(float(np.mean(m["n"])), 4) if n_users else 0.0,
+      })
+
+    ndcgs = [g["ndcg"] for g in groups if g["n_users"] > 0]
+    gap = round(max(ndcgs) - min(ndcgs), 4) if len(ndcgs) >= 2 else 0.0
 
     _fairness_cache = {
         "avg_pop_all":  round(avg_pop_all, 2),
