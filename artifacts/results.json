@@ -1,40 +1,254 @@
 {
   "rating_prediction": {
-    "MAE": 0.7648710169437346,
-    "RMSE": 1.0751501708598503
+    "MAE": 0.786837304014714,
+    "RMSE": 1.0804019491927175
   },
   "rating_prediction_mf": {
-    "MAE": 0.7648710169437346,
-    "RMSE": 1.0751501708598503
+    "MAE": 0.786837304014714,
+    "RMSE": 1.0804019491927175
   },
   "rating_prediction_svdpp": {
-    "MAE": 0.85095055532298,
-    "RMSE": 1.1207872921931077
+    "MAE": 0.8125161866919481,
+    "RMSE": 1.1058415033924611
+  },
+  "rating_prediction_blend": {
+    "MAE": 0.786837304014714,
+    "RMSE": 1.0804019491927175
+  },
+  "rating_calibration": {
+    "mf": {
+      "a": 0.9163922427544215,
+      "b": 0.376246382530555
+    },
+    "svdpp": {
+      "a": 0.7774352822742824,
+      "b": 1.0853368529013248
+    },
+    "blend_alpha": 1.0,
+    "blend_min_gain": 0.0001
+  },
+  "training_selection": {
+    "mf": {
+      "cfg": {
+        "n_factors": 32,
+        "n_epochs": 60,
+        "lr": 0.003,
+        "reg": 0.03
+      },
+      "weights": {
+        "name": "mild",
+        "negative": 1.3,
+        "neutral": 1.1,
+        "positive": 1.0
+      }
+    },
+    "svdpp": {
+      "cfg": {
+        "n_factors": 40,
+        "n_epochs": 55,
+        "lr": 0.004,
+        "reg": 0.025
+      },
+      "weights": {
+        "name": "mild",
+        "negative": 1.3,
+        "neutral": 1.1,
+        "positive": 1.0
+      }
+    },
+    "bpr": {
+      "cfg": {
+        "n_factors": 48,
+        "n_epochs": 40,
+        "lr": 0.01,
+        "reg": 0.01
+      }
+    }
   },
   "recommendation_bpr": {
-    "Precision@K": 0.0007732705541470482,
-    "Recall@K": 0.00479623409413529,
-    "F-measure": 0.0012177133541024152,
-    "NDCG@K": 0.002051374521570404
+    "Precision@K": 0.0012078956899674034,
+    "Recall@K": 0.008362251545029276,
+    "F-measure": 0.001959101125632223,
+    "NDCG@K": 0.004492158000771938
   },
   "recommendation_slim": {
-    "Precision@K": 0.010282506338283232,
-    "Recall@K": 0.07733303266049425,
-    "F-measure": 0.01733823506519898,
-    "NDCG@K": 0.047086767571397424
+    "Precision@K": 0.010762404925751541,
+    "Recall@K": 0.08462032371097794,
+    "F-measure": 0.01836869185612574,
+    "NDCG@K": 0.05178934565481787
   },
   "recommendation_hybrid": {
-    "Precision@K": 0.010316914161535677,
-    "Recall@K": 0.07768373601504,
-    "F-measure": 0.017393247390323757,
-    "NDCG@K": 0.04712114012061971
+    "Precision@K": 0.0108384643245201,
+    "Recall@K": 0.08498077829366714,
+    "F-measure": 0.0184785459582842,
+    "NDCG@K": 0.05179334705863055
+  },
+  "recommendation_slim_balanced": {
+    "Precision@K": 0.010845708076783776,
+    "Recall@K": 0.08505503464348893,
+    "F-measure": 0.01850245369324654,
+    "NDCG@K": 0.05263179668369999
+  },
+  "recommendation_slim_distributed": {
+    "Precision@K": 0.010005432814197754,
+    "Recall@K": 0.07831335223705527,
+    "F-measure": 0.017052426001185467,
+    "NDCG@K": 0.049573971015552866
+  },
+  "recommendation_slim_discovery": {
+    "Precision@K": 0.010005432814197754,
+    "Recall@K": 0.07831335223705527,
+    "F-measure": 0.017052426001185467,
+    "NDCG@K": 0.049573971015552866
+  },
+  "popularity_bias": {
+    "bpr": {
+      "AvgPopularity@K": 519.1144693951467,
+      "CatalogAvgPopularity": 22.504716438513746,
+      "PopularityLiftPct": 2206.69189195716,
+      "HeadShare@K": 1.0,
+      "TailShare@K": 0.0,
+      "Coverage@K": 0.0037386402852870124,
+      "ExposureEntropy": 3.9295271318762115
+    },
+    "slim": {
+      "AvgPopularity@K": 203.47937160449112,
+      "CatalogAvgPopularity": 22.504716438513746,
+      "PopularityLiftPct": 804.1632324514161,
+      "HeadShare@K": 0.8376059398768562,
+      "TailShare@K": 0.006307497283592901,
+      "Coverage@K": 0.34107902910387666,
+      "ExposureEntropy": 10.529208396857536
+    },
+    "hybrid": {
+      "AvgPopularity@K": 202.70215139442232,
+      "CatalogAvgPopularity": 22.504716438513746,
+      "PopularityLiftPct": 800.7096443460416,
+      "HeadShare@K": 0.8459380659181456,
+      "TailShare@K": 0.004703006157189424,
+      "Coverage@K": 0.33515472219026804,
+      "ExposureEntropy": 10.48263772753612
+    },
+    "slim_balanced": {
+      "AvgPopularity@K": 168.65804056501267,
+      "CatalogAvgPopularity": 22.504716438513746,
+      "PopularityLiftPct": 649.4341953866056,
+      "HeadShare@K": 0.7785331401666064,
+      "TailShare@K": 0.04331944947482796,
+      "Coverage@K": 0.34941907281720924,
+      "ExposureEntropy": 10.797345811138205
+    },
+    "slim_distributed": {
+      "AvgPopularity@K": 142.57447844983702,
+      "CatalogAvgPopularity": 22.504716438513746,
+      "PopularityLiftPct": 533.5315481062462,
+      "HeadShare@K": 0.5986091995653748,
+      "TailShare@K": 0.08802607750814923,
+      "Coverage@K": 0.39911422984010125,
+      "ExposureEntropy": 11.304909054046998
+    },
+    "slim_discovery": {
+      "AvgPopularity@K": 142.57447844983702,
+      "CatalogAvgPopularity": 22.504716438513746,
+      "PopularityLiftPct": 533.5315481062462,
+      "HeadShare@K": 0.5986091995653748,
+      "TailShare@K": 0.08802607750814923,
+      "Coverage@K": 0.39911422984010125,
+      "ExposureEntropy": 11.304909054046998
+    }
+  },
+  "fairness_by_activity": {
+    "slim": {
+      "groups": {
+        "cold": {
+          "n_users": 20312,
+          "avg_train_history": 3.760486411973218,
+          "Precision@K": 0.009846396218983852,
+          "Recall@K": 0.09846396218983852,
+          "F-measure": 0.01790253857997064,
+          "NDCG@K": 0.059870158897397587
+        },
+        "warm": {
+          "n_users": 19962,
+          "avg_train_history": 5.736298968039274,
+          "Precision@K": 0.008711551948702533,
+          "Recall@K": 0.08711551948702535,
+          "F-measure": 0.015839185361277333,
+          "NDCG@K": 0.05084270633299329
+        },
+        "power": {
+          "n_users": 14946,
+          "avg_train_history": 13.387327713100495,
+          "Precision@K": 0.014746420446942327,
+          "Recall@K": 0.06247385757528453,
+          "F-measure": 0.0223806357873064,
+          "NDCG@K": 0.0420716509912947
+        }
+      },
+      "gaps": {
+        "Precision@K": 0.006034868498239794,
+        "Recall@K": 0.03599010461455399,
+        "NDCG@K": 0.017798507906102885
+      }
+    },
+    "slim_discovery": {
+      "groups": {
+        "cold": {
+          "n_users": 20312,
+          "avg_train_history": 3.760486411973218,
+          "Precision@K": 0.008940527766837339,
+          "Recall@K": 0.08940527766837338,
+          "F-measure": 0.01625550503061334,
+          "NDCG@K": 0.05666567796938507
+        },
+        "warm": {
+          "n_users": 19962,
+          "avg_train_history": 5.736298968039274,
+          "Precision@K": 0.008190562067929065,
+          "Recall@K": 0.08188057308886885,
+          "F-measure": 0.01489117201470673,
+          "NDCG@K": 0.04916788306103124
+        },
+        "power": {
+          "n_users": 14946,
+          "avg_train_history": 13.387327713100495,
+          "Precision@K": 0.013876622507694367,
+          "Recall@K": 0.05847472972903733,
+          "F-measure": 0.02102205070561136,
+          "NDCG@K": 0.040478532510395696
+        }
+      },
+      "gaps": {
+        "Precision@K": 0.005686060439765302,
+        "Recall@K": 0.03093054793933605,
+        "NDCG@K": 0.016187145458989374
+      }
+    }
+  },
+  "data_quality": {
+    "train_test_user_item_overlap": 91,
+    "train_test_exact_overlap": 0,
+    "train_duplicates_user_item_time": 0,
+    "test_duplicates_user_item_time": 0,
+    "train_rating_polarity": {
+      "negative_le_2": 41872,
+      "neutral_eq_3": 38531,
+      "positive_ge_4": 310864
+    },
+    "test_rating_polarity": {
+      "negative_le_2": 10086,
+      "neutral_eq_3": 8012,
+      "positive_ge_4": 64449
+    },
+    "bpr_non_positive_leak": 0,
+    "bpr_excluded_non_positives": 80403
   },
   "recommendation": {
-    "Precision@K": 0.010282506338283232,
-    "Recall@K": 0.07733303266049425,
-    "F-measure": 0.01733823506519898,
-    "NDCG@K": 0.047086767571397424
+    "Precision@K": 0.010762404925751541,
+    "Recall@K": 0.08462032371097794,
+    "F-measure": 0.01836869185612574,
+    "NDCG@K": 0.05178934565481787
   },
   "best_recommender": "SLIM (item-item ElasticNet)",
-  "best_rating_model": "MF (biased SGD-MF)"
+  "best_rating_model": "MF (weighted+calibrated)"
 }
