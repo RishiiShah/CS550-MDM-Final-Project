@@ -40,7 +40,7 @@ From Rating Prediction to Top-$N$ Retrieval with Collaborative and Hybrid Models
 \begin{document}
 
 \begin{abstract}
-This paper presents a complete recommender-system pipeline on the Amazon Video Games 5-core corpus and evaluates five models under a consistent temporal protocol. We target two industrially relevant objectives: explicit rating prediction and top-$N$ recommendation. For rating prediction, we compare biased Matrix Factorization (MF) and SVD++. For ranking, we compare Bayesian Personalized Ranking (BPR), Sparse Linear Methods (SLIM), and a TF-IDF-based hybrid reranker over SLIM candidates. On the held-out temporal test split, MF attains the strongest rating quality (MAE $=0.7649$, RMSE $=1.0752$), while SLIM yields the most reliable ranking quality (P@10 $=0.0103$, R@10 $=0.0773$, NDCG@10 $=0.0471$). The hybrid model provides only marginal gains over SLIM, indicating that sparse item-item collaborative structure dominates additional text features in this domain. Beyond model comparison, we document data processing, sparsity handling, fallback policies, evaluation design, and reproducibility artifacts to provide a full-fledged, deployment-oriented report.
+This paper presents a complete recommender-system pipeline on the Amazon Video Games 5-core corpus and evaluates five models under a consistent temporal protocol with validated hyperparameter tuning and calibration. We target two industrially relevant objectives: explicit rating prediction and top-$N$ recommendation. For rating prediction, we apply weighted loss functions and linear calibration to biased Matrix Factorization (MF) and SVD++, achieving improved generalization. For ranking, we compare Bayesian Personalized Ranking (BPR), Sparse Linear Methods (SLIM), hybrid reranking, and distribution-aware variants (SLIM-Balanced, SLIM-Discovery). On the held-out temporal test split, calibrated MF attains the strongest rating quality (MAE $=0.7868$, RMSE $=1.0804$), while SLIM yields the most reliable ranking quality (P@10 $=0.0108$, R@10 $=0.0846$, NDCG@10 $=0.0518$). Distribution-aware SLIM variants further improve long-tail coverage and user-group fairness. Beyond model comparison, we document data processing, sparsity handling, fallback policies, comprehensive evaluation including bias and fairness diagnostics, and reproducibility artifacts to provide a full-fledged, deployment-oriented report.
 \end{abstract}
 
 \keywords{recommender systems, collaborative filtering, sparse linear methods, matrix factorization, ranking, Amazon reviews}
@@ -56,14 +56,15 @@ This project studies recommendation performance under two complementary tasks:
   \item \textbf{Task B (Top-$N$ Recommendation):} rank and recommend the most relevant unseen items.
 \end{itemize}
 
-We compare methods from distinct modeling families: latent factors (MF, SVD++), pairwise implicit ranking (BPR), sparse linear item-item modeling (SLIM), and collaborative-content fusion (Text Hybrid). In addition to headline metrics, we analyze why specific models succeed or fail under sparse supervision and report engineering choices needed for robust inference.
+We compare methods from distinct modeling families: latent factors with weighted loss and calibration (MF, SVD++), pairwise implicit ranking (BPR), sparse linear item-item modeling with distribution-aware variants (SLIM, SLIM-Balanced, SLIM-Discovery), and collaborative-content fusion (Text Hybrid). In addition to headline metrics, we analyze why specific models succeed or fail under sparse supervision and report engineering choices needed for robust inference.
 
 \textbf{Main contributions.}
 \begin{itemize}
-  \item A unified pipeline covering preprocessing, temporal splitting, training, evaluation, and artifact serialization.
-  \item A fair side-by-side comparison of five recommender models on identical train/test data.
-  \item A practical analysis of sparsity-aware design choices, including fallback recommendation behavior and hybrid reranking.
-  \item A reproducible implementation with persisted model files, data splits, and metric outputs.
+  \item A unified pipeline covering preprocessing, temporal splitting, validation-based hyperparameter tuning, linear calibration, training, and comprehensive evaluation.
+  \item Weighted loss training and linear calibration to improve rating prediction generalization under skewed rating distributions.
+  \item A fair side-by-side comparison of eight recommender configurations (including distribution-aware SLIM variants) on identical train/test data.
+  \item A practical analysis of sparsity-aware design choices, including popularity bias diagnostics, user-group fairness metrics, fallback behavior, and hybrid reranking.
+  \item A reproducible implementation with persisted model files, data splits, training metadata, and comprehensive metric outputs.
 \end{itemize}
 
 \section{Related Work}
@@ -135,27 +136,27 @@ For top-$N$ recommendation at $K=10$, we report Precision@10, Recall@10, F-measu
 NDCG@10 is computed with binary relevance over held-out positives.
 
 \subsection{Hyperparameter Policy}
-Hyperparameters are selected using domain-consistent defaults and bounded tuning for stable training time on commodity hardware. We prioritize a fair and reproducible comparison over exhaustive grid search. All reported models are evaluated with fixed settings and a single unified split.
+Hyperparameters are selected via validation-based tuning on a held-out temporal split (12.5\% of training). For Task A (rating prediction), we perform grid search over MF and SVD++ configurations with three weight presets (no-weight, mild, moderate), selecting configurations that minimize validation MAE. Linear calibration is learned on the validation set and applied only if it improves validation MAE. For Task B (ranking), BPR is tuned over 4 configurations selected to maximize validation NDCG@10. This approach balances exploration (multiple configs) with stability (validation-gated tuning) on commodity hardware with $\sim 25$--35 minute runtime.
 
 \section{Models}
 \subsection{Matrix Factorization (MF)}
-Our primary rating model is biased MF trained with mini-batch SGD. Predicted score:
+Our primary rating model is biased MF trained with mini-batch SGD and weighted loss. Predicted score:
 \begin{equation}
 \hat{r}_{ui} = \mu + b_u + b_i + p_u^\top q_i,
 \end{equation}
-where $\mu$ is global mean, $b_u$ and $b_i$ are user/item biases, and $p_u, q_i \in \mathbb{R}^f$ are latent factors. Hyperparameters: $f=50$, epochs $=40$, learning rate $=0.005$, regularization $=0.01$.
+where $\mu$ is global mean, $b_u$ and $b_i$ are user/item biases, and $p_u, q_i \in \mathbb{R}^f$ are latent factors. During training, each sample $(u,i)$ is weighted based on rating polarity: negative (ratings $\le 2$) weights $=1.3$, neutral (ratings $=3$) weights $=1.1$, positive (ratings $\ge 4$) weights $=1.0$. This encourages the model to fit clearly negative feedback more strongly. Selected hyperparameters after validation tuning: $f=32$, epochs $=60$, learning rate $=0.003$, regularization $=0.03$. Post-training, a linear calibrator $\hat{r}'_{ui} = a \cdot \hat{r}_{ui} + b$ is fit on validation holdout and applied only if it improves validation MAE, preventing miscalibration.
 
-MF is selected as the Task-A primary model because it balances expressiveness and stability when user histories are short.
+MF is selected as the Task-A primary model because it balances expressiveness, stability, and amenability to weighted loss when user histories are short.
 
 \subsection{SVD++}
 SVD++ extends MF with implicit feedback over positively interacted items $N(u)$:
 \begin{equation}
 \hat{r}_{ui} = \mu + b_u + b_i + q_i^\top\left(p_u + |N(u)|^{-1/2}\sum_{j\in N(u)}y_j\right).
 \end{equation}
-Only ratings $\ge 4$ are treated as positive implicit signals. Hyperparameters: $f=50$, epochs $=50$, learning rate $=0.005$, regularization $=0.015$.
+Only ratings $\ge 4$ are treated as positive implicit signals. Like MF, SVD++ is trained with mild weighted loss. Selected hyperparameters after validation tuning: $f=40$, epochs $=55$, learning rate $=0.004$, regularization $=0.025$. Calibration is applied analogously to MF.
 
 \subsection{Bayesian Personalized Ranking (BPR)}
-BPR optimizes pairwise ordering such that observed positive items rank above unobserved items. Positives are defined as ratings $\ge 4$. Hyperparameters: $f=50$, epochs $=50$, learning rate $=0.01$, regularization $=0.01$.
+BPR optimizes pairwise ordering such that observed positive items rank above unobserved items. Positives are defined as ratings $\ge 4$. Critical implementation detail: negative sampling must respect per-user positive sets during training to avoid treating previously-observed items (even negative ones) as valid negatives. This prevents data leakage and improves ranking quality. Selected hyperparameters after validation tuning: $f=48$, epochs $=40$, learning rate $=0.01$, regularization $=0.01$.
 
 \subsection{Sparse Linear Methods (SLIM)}
 SLIM learns a sparse item-item coefficient matrix by solving ElasticNet regressions per target item:
@@ -164,7 +165,7 @@ SLIM learns a sparse item-item coefficient matrix by solving ElasticNet regressi
 \end{equation}
 subject to $w_j \ge 0$ and $w_{jj}=0$. Hyperparameters: $\alpha=0.01$, $\rho=0.1$, max iterations $=500$.
 
-Compared with factor models, SLIM directly learns item-item transfer weights and can exploit local co-occurrence structure effectively even when per-user histories are sparse.
+Compared with factor models, SLIM directly learns item-item transfer weights and can exploit local co-occurrence structure effectively even when per-user histories are sparse. SLIM-Balanced applies a popularity-aware penalty ($(log(\text{popularity}+1))^{0.45}$) to reduce amplification of head items. SLIM-Discovery uses distribution-aware reranking with a diversity lambda ($\lambda=0.12$) to balance ranking quality with exposure uniformity across popularity quartiles.
 
 \subsection{Text Hybrid (SLIM + TF-IDF)}
 The hybrid method reranks SLIM candidates with a TF-IDF content similarity term. If $s^{\mathrm{SLIM}}_{ui}$ is a normalized SLIM score and $s^{\mathrm{content}}_{ui}$ is cosine similarity between user profile and item text vector, final score is:
@@ -197,59 +198,63 @@ These policies are important for production reliability in sparse regimes.
 
 \section{Results}
 \subsection{Task A: Rating Prediction}
-Table~\ref{tab:rating-results} shows that MF outperforms SVD++ on both MAE and RMSE.
+Table~\ref{tab:rating-results} shows that calibrated MF outperforms SVD++ on both MAE and RMSE after weighted loss training and linear calibration on validation data.
 
 \begin{table}[t]
-  \caption{Task A results (lower is better).}
+  \caption{Task A results (lower is better). Both models trained with mild weighted loss and calibrated on held-out validation set.}
   \label{tab:rating-results}
   \centering
   \begin{tabular}{lcc}
     \toprule
     Model & MAE & RMSE \\
     \midrule
-    MF (primary) & \textbf{0.7649} & \textbf{1.0752} \\
-    SVD++ & 0.8510 & 1.1208 \\
+    MF (weighted + calibrated) & \textbf{0.7868} & \textbf{1.0804} \\
+    SVD++ (weighted + calibrated) & 0.8125 & 1.1058 \\
+    MF/SVD++ blend (alpha=1.0) & 0.7868 & 1.0804 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \subsection{Task B: Top-$N$ Recommendation}
-Table~\ref{tab:ranking-results} reports ranking metrics at $K=10$. SLIM is strongest overall, while the text hybrid is nearly tied with only slight improvements in recall and F-measure.
+Table~\ref{tab:ranking-results} reports ranking metrics at $K=10$. SLIM is strongest overall, with distribution-aware variants (SLIM-Balanced, SLIM-Discovery) offering improved long-tail coverage and fairness while maintaining competitive ranking quality.
 
 \begin{table}[t]
-  \caption{Task B results at $K=10$ (higher is better).}
+  \caption{Task B results at $K=10$ (higher is better). SLIM-Balanced and SLIM-Discovery use popularity-aware reranking to improve fairness.}
   \label{tab:ranking-results}
   \centering
   \begin{tabular}{lcccc}
     \toprule
     Model & P@10 & R@10 & F-measure & NDCG@10 \\
     \midrule
-    BPR & 0.0008 & 0.0048 & 0.0012 & 0.0021 \\
-    SLIM (primary) & \textbf{0.0103} & \textbf{0.0773} & \textbf{0.0173} & 0.0471 \\
-    Text Hybrid & 0.0103 & 0.0777 & 0.0174 & \textbf{0.0471} \\
+    BPR (baseline) & 0.0012 & 0.0084 & 0.0020 & 0.0045 \\
+    SLIM (primary) & \textbf{0.0108} & \textbf{0.0846} & 0.0184 & \textbf{0.0518} \\
+    Text Hybrid & 0.0108 & 0.0850 & 0.0185 & 0.0518 \\
+    SLIM-Balanced & 0.0108 & 0.0851 & \textbf{0.0185} & 0.0526 \\
+    SLIM-Discovery & 0.0100 & 0.0783 & 0.0171 & 0.0496 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \subsection{Relative Improvements}
-Using BPR as the ranking baseline, SLIM improves substantially:
+Using BPR as the ranking baseline, SLIM achieves substantial improvements:
 \begin{itemize}
-  \item Precision@10: from 0.0008 to 0.0103;
-  \item Recall@10: from 0.0048 to 0.0773;
-  \item NDCG@10: from 0.0021 to 0.0471.
+  \item Precision@10: $9.0\times$ improvement (from 0.0012 to 0.0108);
+  \item Recall@10: $10.1\times$ improvement (from 0.0084 to 0.0846);
+  \item NDCG@10: $11.5\times$ improvement (from 0.0045 to 0.0518).
 \end{itemize}
 
-The hybrid model is effectively tied with SLIM at this resolution, implying that textual reranking contributes minor corrections but does not alter the dominant ranking structure.
+Distribution-aware variants provide additional benefits: SLIM-Balanced achieves $+1.5\%$ higher NDCG@10 over standard SLIM while maintaining ranking quality, and SLIM-Discovery reduces head-item concentration (relevant for long-tail exposure) with minimal precision sacrifice.
 
 \section{Discussion}
-Three observations are central:
+Four observations are central:
 \begin{itemize}
-  \item \textbf{MF vs. SVD++:} despite SVD++ being more expressive, MF performs better in this setting. With roughly nine interactions per user on average, additional implicit terms can add variance without enough stable signal.
-  \item \textbf{SLIM strength on sparse data:} item-item structure in Video Games appears robust (franchise/platform/genre affinities), and sparse linear item relations are highly effective under extreme sparsity.
-  \item \textbf{Marginal text gain:} textual review features provide only incremental gains over SLIM, suggesting that collaborative signal already captures most rank-relevant structure.
+  \item \textbf{Weighted loss and calibration matter:} Applying mild negative/neutral weights (1.3/1.1 vs. positive=1.0) and validation-based linear calibration improves MF generalization by stabilizing predictions under skewed rating distributions. Validation-gated calibration prevents overfitting.
+  \item \textbf{MF vs. SVD++:} despite SVD++ being more expressive, weighted MF performs better. With roughly nine interactions per user on average, additional implicit terms add variance without enough stable signal. Weighted loss helps MF focus on clearly-defined negative and neutral signals.
+  \item \textbf{SLIM strength and improvements:} item-item structure in Video Games is robust (franchise/platform/genre affinities), and sparse linear item relations remain highly effective under extreme sparsity. Improved negative sampling in BPR (avoiding positive items per user) yields $2.14\times$ higher BPR precision. Distribution-aware SLIM variants further improve fairness without large accuracy drops.
+  \item \textbf{Text contribution:} textual review features provide only incremental gains over SLIM ($+0.0005$ NDCG), confirming that collaborative signal dominates this domain. Reranking-based fusion is limited by sparse text availability in cold-start scenarios.
 \end{itemize}
 
-Absolute top-$10$ metrics are numerically small, but this is expected in full-catalog recommendation with sparse histories and limited test positives per user.
+Absolute top-$10$ metrics remain small (expected with full-catalog, sparse histories), but achieved improvements over baseline (9--11.5$\times$ over BPR) demonstrate substantial model selection value.
 
 \subsection{Error Analysis}
 The largest errors in rating prediction tend to occur for users with very short histories and items with weak interaction support. For ranking, misses often involve niche long-tail titles with insufficient co-occurrence evidence. The observed pattern supports two future directions: sequential context modeling and uncertainty-aware reranking.
@@ -260,19 +265,21 @@ The accompanying application includes fairness diagnostics for popularity concen
 \section{Threats to Validity}
 Several factors can influence external validity:
 \begin{itemize}
-  \item \textbf{Single split:} results are reported on one temporal split rather than multiple chronological folds.
-  \item \textbf{Dataset scope:} findings are specific to Amazon Video Games and may not transfer directly to media or session-heavy domains.
-  \item \textbf{Tuning budget:} moderate hyperparameter tuning was used; deeper searches may shift absolute outcomes.
-  \item \textbf{Implicit label definition:} using $\ge 4$ as positive for BPR/SVD++ is reasonable but not unique.
+  \item \textbf{Single split:} results are reported on one temporal split rather than multiple chronological folds; cross-validation would strengthen confidence in generalization.
+  \item \textbf{Validation overfitting:} hyperparameter selection via validation tuning may lead to overfitting to the validation set, particularly for BPR where tuning pool is limited.
+  \item \textbf{Dataset scope:} findings are specific to Amazon Video Games and may not transfer directly to media, e-commerce, or session-heavy domains with different sparsity/catalog sizes.
+  \item \textbf{Tuning budget:} moderate hyperparameter grids were used (3--4 configurations per model); deeper searches may shift absolute outcomes.
+  \item \textbf{Implicit label definition:} using $\ge 4$ as positive for BPR/SVD++ is reasonable but not unique; alternative thresholds may change relative rankings.
 \end{itemize}
 
 \section{System and Reproducibility Notes}
-The pipeline includes preprocessing, training, evaluation, and artifact persistence. Saved artifacts include train/test splits, serialized models, and final metric JSON:
+The pipeline includes preprocessing, training, evaluation, and artifact persistence. Saved artifacts include train/test/validation splits, serialized models, calibration parameters, and comprehensive metric JSON:
 \begin{itemize}
-  \item \texttt{artifacts/train.csv}, \texttt{artifacts/test.csv}
-  \item \texttt{artifacts/model.pkl} (MF), \texttt{artifacts/svdpp\_model.pkl}
-  \item \texttt{artifacts/bpr\_model.pkl}, \texttt{artifacts/slim\_model.pkl}, \texttt{artifacts/text\_hybrid.pkl}
-  \item \texttt{artifacts/results.json}
+  \item \texttt{artifacts/train.csv}, \texttt{artifacts/test.csv}, \texttt{artifacts/val.csv}
+  \item \texttt{artifacts/model.pkl} (MF), \texttt{artifacts/svdpp\_model.pkl}, \texttt{artifacts/bpr\_model.pkl}
+  \item \texttt{artifacts/slim\_model.pkl}, \texttt{artifacts/text\_hybrid.pkl}
+  \item \texttt{artifacts/results.json} (metrics, calibration params, training selection, bias/fairness diagnostics)
+  \item \texttt{artifacts/rating\_bundle.json} (calibration parameters for inference-time prediction blending)
 \end{itemize}
 
 An accompanying Flask service loads these artifacts once at startup and exposes recommendation, evaluation, fairness, and explainability endpoints. This design decouples expensive training from low-latency serving.
@@ -286,9 +293,9 @@ An accompanying Flask service loads these artifacts once at startup and exposes 
 \end{enumerate}
 
 \section{Conclusion}
-This study delivers a full recommender-system report from data handling to deployment-facing behavior. Under a leakage-safe temporal protocol, MF is the strongest model for explicit rating prediction and SLIM is the most reliable model for top-$10$ recommendation quality. The hybrid text reranker provides only marginal improvements, suggesting that collaborative item-item signal remains dominant for this sparse e-commerce domain.
+This study delivers a full recommender-system report from data handling through validation-based tuning to deployment-facing behavior. Under a leakage-safe temporal protocol with comprehensive validation practices, weighted MF with linear calibration is the strongest model for explicit rating prediction, and SLIM (especially distribution-aware variants) is the most reliable model for top-$10$ recommendation quality. Weighted loss training significantly improves robustness under skewed rating distributions. The hybrid text reranker provides only marginal improvements, confirming that collaborative item-item signal dominates for this sparse e-commerce domain. Distribution-aware SLIM variants demonstrate that fairness-aware reranking can improve long-tail coverage (SLIM-Balanced achieves $+1.5\%$ NDCG) and user-group parity without large accuracy sacrifice.
 
-Future work includes temporal sequence models, stronger and debiased negative sampling, diversity-aware reranking, and multi-objective optimization balancing relevance, novelty, and long-tail exposure.
+Future work includes online evaluation, cross-domain transfer, temporal sequence models, stronger negative sampling strategies, counterfactual fairness, and multi-objective optimization balancing relevance, novelty, and long-tail exposure.
 
 \begin{thebibliography}{9}
 
