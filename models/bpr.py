@@ -65,11 +65,16 @@ class BPR:
         n_pairs = len(u_arr)
         batch_size = 512
 
+        # Per-user positive sets for valid negative sampling (j ∉ positives(u)).
+        user_pos = {}
+        for u, i in zip(u_arr, i_arr):
+            user_pos.setdefault(int(u), set()).add(int(i))
+        self._user_pos = user_pos
+
         for epoch in range(self.n_epochs):
             order  = np.random.permutation(n_pairs)
             u_shuf = u_arr[order]
             i_shuf = i_arr[order]
-            j_shuf = np.random.randint(0, n_items, size=n_pairs)
 
             total_loss = 0.0
             n_batches  = int(np.ceil(n_pairs / batch_size))
@@ -80,7 +85,20 @@ class BPR:
 
                 u_b = u_shuf[s:e]
                 i_b = i_shuf[s:e]
-                j_b = j_shuf[s:e]
+                j_b = np.empty(e - s, dtype=np.int64)
+
+                # Sample negatives unseen by each user in training positives.
+                for t, (u, i_pos) in enumerate(zip(u_b, i_b)):
+                    pos_set = self._user_pos.get(int(u), set())
+                    j = np.random.randint(0, n_items)
+                    guard = 0
+                    while (j == i_pos) or (j in pos_set):
+                        j = np.random.randint(0, n_items)
+                        guard += 1
+                        if guard > 100:
+                            # Safety fallback for pathological dense users.
+                            break
+                    j_b[t] = j
 
                 x_ui  = self.bi[i_b] + np.einsum("bf,bf->b", self.P[u_b], self.Q[i_b])
                 x_uj  = self.bi[j_b] + np.einsum("bf,bf->b", self.P[u_b], self.Q[j_b])
