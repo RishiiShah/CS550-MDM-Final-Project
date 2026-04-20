@@ -86,9 +86,18 @@ def load_data(path: str = DATA_FILE,
 
     df = pd.DataFrame(records)
     df.dropna(subset=["user_id", "item_id", "rating"], inplace=True)
+
+    # Remove duplicated events before splitting/evaluation.
+    # Keying by (user, item, timestamp) avoids contradictory copies of the same event.
+    before = len(df)
+    df = df.drop_duplicates(subset=["user_id", "item_id", "timestamp"], keep="first")
+    removed = before - len(df)
+
     df.reset_index(drop=True, inplace=True)
     print(f"  Loaded {len(df):,} records — "
           f"{df['user_id'].nunique():,} users, {df['item_id'].nunique():,} items")
+    if removed > 0:
+        print(f"  Removed {removed:,} exact duplicate interactions")
     return df
 
 
@@ -101,8 +110,10 @@ def train_test_split(df: pd.DataFrame, test_ratio: float = 0.2):
     that happened after the reviews it is evaluated on.
     """
     train_rows, test_rows = [], []
-    for uid, group in df.groupby("user_id"):
-        sorted_idx = group.sort_values("timestamp").index.tolist()
+    # Stable sort keeps deterministic ordering for tied timestamps.
+    work_df = df.sort_values(["user_id", "timestamp"], kind="mergesort")
+    for uid, group in work_df.groupby("user_id", sort=False):
+        sorted_idx = group.index.tolist()
         n_test = max(1, int(len(sorted_idx) * test_ratio))
         test_set = set(sorted_idx[-n_test:])
         for idx in sorted_idx:
