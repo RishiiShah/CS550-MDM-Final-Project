@@ -21,14 +21,34 @@ class SVDpp:
         lr: float = 0.005,
         reg: float = 0.015,
         seed: int = 42,
+        rating_weights: dict | None = None,
+        early_stopping_patience: int | None = None,
     ):
         self.n_factors = n_factors
         self.n_epochs = n_epochs
         self.lr = lr
         self.reg = reg
         self.seed = seed
+        self.rating_weights = rating_weights or {
+            "negative": 1.0,
+            "neutral": 1.0,
+            "positive": 1.0,
+        }
+        self.early_stopping_patience = early_stopping_patience
 
-    def fit(self, train_df: pd.DataFrame, user2idx: dict, item2idx: dict):
+    def _weights_for_ratings(self, ratings: np.ndarray) -> np.ndarray:
+        w = np.full(len(ratings), float(self.rating_weights.get("neutral", 1.0)), dtype=np.float64)
+        w[ratings <= 2.0] = float(self.rating_weights.get("negative", 1.0))
+        w[ratings >= 4.0] = float(self.rating_weights.get("positive", 1.0))
+        return w
+
+    def fit(
+        self,
+        train_df: pd.DataFrame,
+        user2idx: dict,
+        item2idx: dict,
+        val_df: pd.DataFrame | None = None,
+    ):
         np.random.seed(self.seed)
         self.user2idx = user2idx
         self.item2idx = item2idx
@@ -45,6 +65,11 @@ class SVDpp:
         u_arr = train_df["user_id"].map(user2idx).values
         i_arr = train_df["item_id"].map(item2idx).values
         r_arr = train_df["rating"].values.astype(np.float64)
+        valid = (~pd.isna(u_arr)) & (~pd.isna(i_arr))
+        u_arr = u_arr[valid].astype(np.int64)
+        i_arr = i_arr[valid].astype(np.int64)
+        r_arr = r_arr[valid]
+        sample_w = self._weights_for_ratings(r_arr)
         n_samples = len(r_arr)
 
         # N(u): only positively-rated items (≥4★) as implicit feedback.
@@ -61,6 +86,10 @@ class SVDpp:
             for u, items in Nu.items()
         }
 
+        best_val_rmse = np.inf
+        best_state = None
+        patience_left = self.early_stopping_patience
+
         for epoch in range(self.n_epochs):
             # Pre-compute sum_y for each user
             sum_y = np.zeros((n_users, self.n_factors))
@@ -75,28 +104,64 @@ class SVDpp:
                 u = int(u_arr[idx])
                 i = int(i_arr[idx])
                 r = r_arr[idx]
+                w = sample_w[idx]
                 implicit_u = sum_y[u]
 
                 pred = (self.global_mean + self.bu[u] + self.bi[i]
                         + self.qi[i] @ (self.pu[u] + implicit_u))
                 err  = r - pred
-                total_sq_err += err * err
+                w_err = w * err
+                total_sq_err += w * err * err
 
-                self.bu[u] += self.lr * (err - self.reg * self.bu[u])
-                self.bi[i] += self.lr * (err - self.reg * self.bi[i])
+                self.bu[u] += self.lr * (w_err - self.reg * self.bu[u])
+                self.bi[i] += self.lr * (w_err - self.reg * self.bi[i])
 
                 pu_old = self.pu[u].copy()
-                self.pu[u] += self.lr * (err * self.qi[i] - self.reg * self.pu[u])
-                self.qi[i] += self.lr * (err * (pu_old + implicit_u) - self.reg * self.qi[i])
+                self.pu[u] += self.lr * (w_err * self.qi[i] - self.reg * self.pu[u])
+                self.qi[i] += self.lr * (w_err * (pu_old + implicit_u) - self.reg * self.qi[i])
 
                 if u in Nu and len(Nu[u]) > 0:
                     sqrt_inv = Nu_sqrt_inv[u]
                     self.y[Nu[u]] += self.lr * (
-                        err * sqrt_inv * self.qi[i] - self.reg * self.y[Nu[u]]
+                        w_err * sqrt_inv * self.qi[i] - self.reg * self.y[Nu[u]]
                     )
 
-            train_rmse = np.sqrt(total_sq_err / n_samples)
-            print(f"  SVD++ Epoch {epoch+1}/{self.n_epochs}  Train RMSE: {train_rmse:.4f}")
+            train_rmse = np.sqrt(total_sq_err / np.maximum(sample_w.sum(), 1e-8))
+            if val_df is None:
+                print(f"  SVD++ Epoch {epoch+1}/{self.n_epochs}  Train wRMSE: {train_rmse:.4f}")
+                continue
+
+            y_val = val_df["rating"].values
+            y_hat_val = self.predict_batch(val_df)
+            val_rmse = float(np.sqrt(np.mean((y_val - y_hat_val) ** 2)))
+            print(
+                f"  SVD++ Epoch {epoch+1}/{self.n_epochs}  Train wRMSE: {train_rmse:.4f}"
+                f"  Val RMSE: {val_rmse:.4f}"
+            )
+
+            if val_rmse + 1e-8 < best_val_rmse:
+                best_val_rmse = val_rmse
+                best_state = {
+                    "bu": self.bu.copy(),
+                    "bi": self.bi.copy(),
+                    "pu": self.pu.copy(),
+                    "qi": self.qi.copy(),
+                    "y": self.y.copy(),
+                }
+                if patience_left is not None:
+                    patience_left = self.early_stopping_patience
+            elif patience_left is not None:
+                patience_left -= 1
+                if patience_left <= 0:
+                    print(f"  SVD++ early stopping triggered at epoch {epoch+1}")
+                    break
+
+        if best_state is not None:
+            self.bu = best_state["bu"]
+            self.bi = best_state["bi"]
+            self.pu = best_state["pu"]
+            self.qi = best_state["qi"]
+            self.y = best_state["y"]
 
     def predict_one(self, user_id: str, item_id: str) -> float:
         u = self.user2idx.get(user_id)
