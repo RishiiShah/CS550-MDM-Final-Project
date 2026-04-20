@@ -1,0 +1,321 @@
+\documentclass[sigconf,nonacm]{acmart}
+
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{siunitx}
+\usepackage{url}
+
+\title{A Full-Stack Recommender System Study on Amazon Video Games:\\
+From Rating Prediction to Top-$N$ Retrieval with Collaborative and Hybrid Models}
+
+\author{Rishabh Sanjeev Shah}
+\affiliation{%
+  \institution{Rutgers University}
+  \city{New Brunswick}
+  \state{New Jersey}
+  \country{USA}
+}
+\email{rs2780@rutgers.edu}
+
+\author{Om Nirav Patel}
+\affiliation{%
+  \institution{Rutgers University}
+  \city{New Brunswick}
+  \state{New Jersey}
+  \country{USA}
+}
+\email{op187@rutgers.edu}
+
+\author{Vivek Sai Manthri}
+\affiliation{%
+  \institution{Rutgers University}
+  \city{New Brunswick}
+  \state{New Jersey}
+  \country{USA}
+}
+\email{vm614@rutgers.edu}
+
+\renewcommand\shortauthors{Shah, Patel, and Manthri}
+
+\begin{document}
+
+\begin{abstract}
+This paper presents a complete recommender-system pipeline on the Amazon Video Games 5-core corpus and evaluates five models under a consistent temporal protocol. We target two industrially relevant objectives: explicit rating prediction and top-$N$ recommendation. For rating prediction, we compare biased Matrix Factorization (MF) and SVD++. For ranking, we compare Bayesian Personalized Ranking (BPR), Sparse Linear Methods (SLIM), and a TF-IDF-based hybrid reranker over SLIM candidates. On the held-out temporal test split, MF attains the strongest rating quality (MAE $=0.7649$, RMSE $=1.0752$), while SLIM yields the most reliable ranking quality (P@10 $=0.0103$, R@10 $=0.0773$, NDCG@10 $=0.0471$). The hybrid model provides only marginal gains over SLIM, indicating that sparse item-item collaborative structure dominates additional text features in this domain. Beyond model comparison, we document data processing, sparsity handling, fallback policies, evaluation design, and reproducibility artifacts to provide a full-fledged, deployment-oriented report.
+\end{abstract}
+
+\keywords{recommender systems, collaborative filtering, sparse linear methods, matrix factorization, ranking, Amazon reviews}
+
+\maketitle
+
+\section{Introduction}
+Recommender systems are central to personalized discovery in e-commerce, content platforms, and app ecosystems. A practical recommender must perform well under heavy sparsity, long-tail catalogs, cold users, and strict leakage constraints. The Amazon Video Games domain captures many of these realities: user histories are short, the item catalog is large, and interaction frequencies are highly skewed.
+
+This project studies recommendation performance under two complementary tasks:
+\begin{itemize}
+  \item \textbf{Task A (Rating Prediction):} estimate the scalar score a user would assign to an item.
+  \item \textbf{Task B (Top-$N$ Recommendation):} rank and recommend the most relevant unseen items.
+\end{itemize}
+
+We compare methods from distinct modeling families: latent factors (MF, SVD++), pairwise implicit ranking (BPR), sparse linear item-item modeling (SLIM), and collaborative-content fusion (Text Hybrid). In addition to headline metrics, we analyze why specific models succeed or fail under sparse supervision and report engineering choices needed for robust inference.
+
+\textbf{Main contributions.}
+\begin{itemize}
+  \item A unified pipeline covering preprocessing, temporal splitting, training, evaluation, and artifact serialization.
+  \item A fair side-by-side comparison of five recommender models on identical train/test data.
+  \item A practical analysis of sparsity-aware design choices, including fallback recommendation behavior and hybrid reranking.
+  \item A reproducible implementation with persisted model files, data splits, and metric outputs.
+\end{itemize}
+
+\section{Related Work}
+Neighborhood and matrix-factorization methods are foundational recommender approaches. Koren's factorization framework highlights the value of user/item biases and latent factors for explicit-feedback prediction~\cite{koren2008factorization}. SVD++ extends this idea with implicit interaction context to strengthen user representations. For ranking from implicit or weakly implicit feedback, BPR directly optimizes pairwise preferences~\cite{rendle2009bpr}. In sparse catalogs, SLIM learns sparse, non-negative item-item coefficients and often performs strongly for top-$N$ retrieval because it captures direct item substitutability and complementarity~\cite{ning2011slim}. Amazon benchmark datasets are widely used for domain-level comparison and stress-testing recommender behavior under long-tail and sparse conditions~\cite{mcauley2015amazon}.
+
+Our work follows this literature but emphasizes an end-to-end reproducible implementation and a deployment-facing comparison between explicit prediction and ranking objectives.
+
+\section{Dataset and Experimental Setup}
+\subsection{Dataset}
+We use the Amazon Video Games 5-core dataset (JSON, gzipped), where each retained user has at least five interactions. Table~\ref{tab:data-stats} summarizes the corpus statistics.
+
+\begin{table}[t]
+  \caption{Dataset statistics (Amazon Video Games 5-core).}
+  \label{tab:data-stats}
+  \centering
+  \begin{tabular}{lr}
+    \toprule
+    Statistic & Value \\
+    \midrule
+    Total interactions & 497,565 \\
+    Unique users & 55,220 \\
+    Unique items & 17,408 \\
+    Train interactions & 412,281 \\
+    Test interactions & 85,284 \\
+    Density (all interactions) & 0.0518\% \\
+    Avg. interactions per user & 9.01 \\
+    Avg. interactions per item & 28.58 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The interaction matrix is extremely sparse:
+\begin{equation}
+\text{density} = \frac{|\mathcal{R}|}{|\mathcal{U}|\cdot|\mathcal{I}|} \approx 0.0005176,
+\end{equation}
+which corresponds to $0.0518\%$ observed user-item pairs. This sparsity strongly influences model behavior and motivates robust fallback strategies.
+
+\subsection{Train/Test Protocol}
+We apply a \textbf{per-user temporal split}: the most recent 20\% of each user's interactions are used for test, with the remainder used for training. This protocol avoids future information leakage and better reflects production recommendation conditions.
+
+\subsection{Preprocessing Pipeline}
+The preprocessing stage performs the following sequence:
+\begin{itemize}
+  \item parse and normalize review records into $(\texttt{user\_id},\texttt{item\_id},\texttt{rating},\texttt{timestamp},\texttt{title},\texttt{review})$ tuples;
+  \item sort per user by timestamp for temporal splitting;
+  \item build stable user/item index maps used consistently by all models;
+  \item persist processed train/test CSV files for deterministic re-runs.
+\end{itemize}
+
+For models requiring implicit positive sets (SVD++, BPR), interactions with ratings $\ge 4$ are treated as positives.
+
+\subsection{Evaluation Metrics}
+For rating prediction, we report Mean Absolute Error (MAE) and Root Mean Squared Error (RMSE):
+\begin{equation}
+\mathrm{MAE} = \frac{1}{|\mathcal{D}|}\sum_{(u,i)\in\mathcal{D}} |r_{ui}-\hat{r}_{ui}|,
+\end{equation}
+\begin{equation}
+\mathrm{RMSE} = \sqrt{\frac{1}{|\mathcal{D}|}\sum_{(u,i)\in\mathcal{D}} (r_{ui}-\hat{r}_{ui})^2}.
+\end{equation}
+
+For top-$N$ recommendation at $K=10$, we report Precision@10, Recall@10, F-measure, and NDCG@10. Let $G_u$ be user $u$'s ground-truth test items and $R_u^{(K)}$ the top-$K$ recommendation list:
+\begin{equation}
+\text{Precision@}K = \frac{1}{|\mathcal{U}|}\sum_u \frac{|R_u^{(K)}\cap G_u|}{K},
+\end{equation}
+\begin{equation}
+\text{Recall@}K = \frac{1}{|\mathcal{U}|}\sum_u \frac{|R_u^{(K)}\cap G_u|}{|G_u|}.
+\end{equation}
+
+NDCG@10 is computed with binary relevance over held-out positives.
+
+\subsection{Hyperparameter Policy}
+Hyperparameters are selected using domain-consistent defaults and bounded tuning for stable training time on commodity hardware. We prioritize a fair and reproducible comparison over exhaustive grid search. All reported models are evaluated with fixed settings and a single unified split.
+
+\section{Models}
+\subsection{Matrix Factorization (MF)}
+Our primary rating model is biased MF trained with mini-batch SGD. Predicted score:
+\begin{equation}
+\hat{r}_{ui} = \mu + b_u + b_i + p_u^\top q_i,
+\end{equation}
+where $\mu$ is global mean, $b_u$ and $b_i$ are user/item biases, and $p_u, q_i \in \mathbb{R}^f$ are latent factors. Hyperparameters: $f=50$, epochs $=40$, learning rate $=0.005$, regularization $=0.01$.
+
+MF is selected as the Task-A primary model because it balances expressiveness and stability when user histories are short.
+
+\subsection{SVD++}
+SVD++ extends MF with implicit feedback over positively interacted items $N(u)$:
+\begin{equation}
+\hat{r}_{ui} = \mu + b_u + b_i + q_i^\top\left(p_u + |N(u)|^{-1/2}\sum_{j\in N(u)}y_j\right).
+\end{equation}
+Only ratings $\ge 4$ are treated as positive implicit signals. Hyperparameters: $f=50$, epochs $=50$, learning rate $=0.005$, regularization $=0.015$.
+
+\subsection{Bayesian Personalized Ranking (BPR)}
+BPR optimizes pairwise ordering such that observed positive items rank above unobserved items. Positives are defined as ratings $\ge 4$. Hyperparameters: $f=50$, epochs $=50$, learning rate $=0.01$, regularization $=0.01$.
+
+\subsection{Sparse Linear Methods (SLIM)}
+SLIM learns a sparse item-item coefficient matrix by solving ElasticNet regressions per target item:
+\begin{equation}
+\min_{w_j}\;\frac{1}{2}\lVert r_j - X_j w_j\rVert_2^2 + \alpha\left(\rho\lVert w_j\rVert_1 + \frac{1-\rho}{2}\lVert w_j\rVert_2^2\right)
+\end{equation}
+subject to $w_j \ge 0$ and $w_{jj}=0$. Hyperparameters: $\alpha=0.01$, $\rho=0.1$, max iterations $=500$.
+
+Compared with factor models, SLIM directly learns item-item transfer weights and can exploit local co-occurrence structure effectively even when per-user histories are sparse.
+
+\subsection{Text Hybrid (SLIM + TF-IDF)}
+The hybrid method reranks SLIM candidates with a TF-IDF content similarity term. If $s^{\mathrm{SLIM}}_{ui}$ is a normalized SLIM score and $s^{\mathrm{content}}_{ui}$ is cosine similarity between user profile and item text vector, final score is:
+\begin{equation}
+\mathrm{score}_{ui} = (1-\alpha)\,s^{\mathrm{SLIM}}_{ui} + \alpha\,s^{\mathrm{content}}_{ui},
+\end{equation}
+with $\alpha=0.3$ and TF-IDF vocabulary size capped at 5000 (unigrams and bigrams).
+
+\section{System Architecture and Implementation}
+The implementation is modular and organized around separate preprocessing, modeling, and evaluation utilities. A top-level training script orchestrates:
+\begin{enumerate}
+  \item data loading and temporal splitting;
+  \item id-map construction and artifact persistence;
+  \item model training (MF, SVD++, BPR, SLIM, Text Hybrid);
+  \item metric evaluation;
+  \item serialization of trained models and final JSON metrics.
+\end{enumerate}
+
+Runtime is dominated by SLIM due to per-item ElasticNet fitting over a large catalog. On the target machine, full pipeline runtime is approximately 25--35 minutes.
+
+\subsection{Inference and Fallback Logic}
+To ensure robust top-$10$ output for every queryable user, the system uses fallback behavior:
+\begin{itemize}
+  \item if SLIM returns insufficient non-zero scores for a user, the list is padded with globally popular unseen items;
+  \item for users unseen by BPR during training, recommendations revert to popularity ranking;
+  \item hybrid reranking only operates on an upstream candidate pool and defers to collaborative outputs when content vectors are unavailable.
+\end{itemize}
+
+These policies are important for production reliability in sparse regimes.
+
+\section{Results}
+\subsection{Task A: Rating Prediction}
+Table~\ref{tab:rating-results} shows that MF outperforms SVD++ on both MAE and RMSE.
+
+\begin{table}[t]
+  \caption{Task A results (lower is better).}
+  \label{tab:rating-results}
+  \centering
+  \begin{tabular}{lcc}
+    \toprule
+    Model & MAE & RMSE \\
+    \midrule
+    MF (primary) & \textbf{0.7649} & \textbf{1.0752} \\
+    SVD++ & 0.8510 & 1.1208 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Task B: Top-$N$ Recommendation}
+Table~\ref{tab:ranking-results} reports ranking metrics at $K=10$. SLIM is strongest overall, while the text hybrid is nearly tied with only slight improvements in recall and F-measure.
+
+\begin{table}[t]
+  \caption{Task B results at $K=10$ (higher is better).}
+  \label{tab:ranking-results}
+  \centering
+  \begin{tabular}{lcccc}
+    \toprule
+    Model & P@10 & R@10 & F-measure & NDCG@10 \\
+    \midrule
+    BPR & 0.0008 & 0.0048 & 0.0012 & 0.0021 \\
+    SLIM (primary) & \textbf{0.0103} & \textbf{0.0773} & \textbf{0.0173} & 0.0471 \\
+    Text Hybrid & 0.0103 & 0.0777 & 0.0174 & \textbf{0.0471} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Relative Improvements}
+Using BPR as the ranking baseline, SLIM improves substantially:
+\begin{itemize}
+  \item Precision@10: from 0.0008 to 0.0103;
+  \item Recall@10: from 0.0048 to 0.0773;
+  \item NDCG@10: from 0.0021 to 0.0471.
+\end{itemize}
+
+The hybrid model is effectively tied with SLIM at this resolution, implying that textual reranking contributes minor corrections but does not alter the dominant ranking structure.
+
+\section{Discussion}
+Three observations are central:
+\begin{itemize}
+  \item \textbf{MF vs. SVD++:} despite SVD++ being more expressive, MF performs better in this setting. With roughly nine interactions per user on average, additional implicit terms can add variance without enough stable signal.
+  \item \textbf{SLIM strength on sparse data:} item-item structure in Video Games appears robust (franchise/platform/genre affinities), and sparse linear item relations are highly effective under extreme sparsity.
+  \item \textbf{Marginal text gain:} textual review features provide only incremental gains over SLIM, suggesting that collaborative signal already captures most rank-relevant structure.
+\end{itemize}
+
+Absolute top-$10$ metrics are numerically small, but this is expected in full-catalog recommendation with sparse histories and limited test positives per user.
+
+\subsection{Error Analysis}
+The largest errors in rating prediction tend to occur for users with very short histories and items with weak interaction support. For ranking, misses often involve niche long-tail titles with insufficient co-occurrence evidence. The observed pattern supports two future directions: sequential context modeling and uncertainty-aware reranking.
+
+\subsection{Fairness and Coverage Notes}
+The accompanying application includes fairness diagnostics for popularity concentration, user activity groups, and catalog coverage. These checks help detect over-amplification of already-popular titles and identify whether quality degrades disproportionately for colder users.
+
+\section{Threats to Validity}
+Several factors can influence external validity:
+\begin{itemize}
+  \item \textbf{Single split:} results are reported on one temporal split rather than multiple chronological folds.
+  \item \textbf{Dataset scope:} findings are specific to Amazon Video Games and may not transfer directly to media or session-heavy domains.
+  \item \textbf{Tuning budget:} moderate hyperparameter tuning was used; deeper searches may shift absolute outcomes.
+  \item \textbf{Implicit label definition:} using $\ge 4$ as positive for BPR/SVD++ is reasonable but not unique.
+\end{itemize}
+
+\section{System and Reproducibility Notes}
+The pipeline includes preprocessing, training, evaluation, and artifact persistence. Saved artifacts include train/test splits, serialized models, and final metric JSON:
+\begin{itemize}
+  \item \texttt{artifacts/train.csv}, \texttt{artifacts/test.csv}
+  \item \texttt{artifacts/model.pkl} (MF), \texttt{artifacts/svdpp\_model.pkl}
+  \item \texttt{artifacts/bpr\_model.pkl}, \texttt{artifacts/slim\_model.pkl}, \texttt{artifacts/text\_hybrid.pkl}
+  \item \texttt{artifacts/results.json}
+\end{itemize}
+
+An accompanying Flask service loads these artifacts once at startup and exposes recommendation, evaluation, fairness, and explainability endpoints. This design decouples expensive training from low-latency serving.
+
+\subsection{Reproduction Steps}
+\begin{enumerate}
+  \item Create and activate a Python environment.
+  \item Install dependencies from \texttt{requirements.txt}.
+  \item Execute \texttt{python train\_and\_evaluate.py} to regenerate all artifacts.
+  \item Run \texttt{python app.py} to launch the interactive interface.
+\end{enumerate}
+
+\section{Conclusion}
+This study delivers a full recommender-system report from data handling to deployment-facing behavior. Under a leakage-safe temporal protocol, MF is the strongest model for explicit rating prediction and SLIM is the most reliable model for top-$10$ recommendation quality. The hybrid text reranker provides only marginal improvements, suggesting that collaborative item-item signal remains dominant for this sparse e-commerce domain.
+
+Future work includes temporal sequence models, stronger and debiased negative sampling, diversity-aware reranking, and multi-objective optimization balancing relevance, novelty, and long-tail exposure.
+
+\begin{thebibliography}{9}
+
+\bibitem{ning2011slim}
+Xia Ning and George Karypis.
+\newblock 2011.
+\newblock SLIM: Sparse Linear Methods for Top-N Recommender Systems.
+\newblock In \emph{Proceedings of the 2011 IEEE 11th International Conference on Data Mining}.
+
+\bibitem{rendle2009bpr}
+Steffen Rendle, Christoph Freudenthaler, Zeno Gantner, and Lars Schmidt-Thieme.
+\newblock 2009.
+\newblock BPR: Bayesian Personalized Ranking from Implicit Feedback.
+\newblock In \emph{Proceedings of the 25th Conference on Uncertainty in Artificial Intelligence}.
+
+\bibitem{koren2008factorization}
+Yehuda Koren.
+\newblock 2008.
+\newblock Factorization Meets the Neighborhood: a Multifaceted Collaborative Filtering Model.
+\newblock In \emph{Proceedings of the 14th ACM SIGKDD International Conference on Knowledge Discovery and Data Mining}.
+
+\bibitem{mcauley2015amazon}
+Julian McAuley, Christopher Targett, Qinfeng Shi, and Anton van den Hengel.
+\newblock 2015.
+\newblock Image-Based Recommendations on Styles and Substitutes.
+\newblock In \emph{Proceedings of the 38th International ACM SIGIR Conference on Research and Development in Information Retrieval}.
+
+\end{thebibliography}
+
+\end{document}

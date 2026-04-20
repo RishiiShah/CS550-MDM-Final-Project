@@ -50,7 +50,7 @@ Biased SGD matrix factorization (SVD-style). Learns user factors **P**, item fac
 x̂_ui = μ + b_u + b_i + P_u · Q_i
 ```
 
-Hyperparameters: `n_factors=50`, `n_epochs=40`, `lr=0.005`, `reg=0.01`
+Current selected configuration: `n_factors=32`, `n_epochs=60`, `lr=0.003`, `reg=0.03`
 
 #### SVD++ — Baseline
 Extends MF with implicit feedback from high-confidence interactions (ratings ≥ 4★). The implicit term augments the user factor with a weighted sum over item vectors for positively-rated items.
@@ -61,7 +61,7 @@ x̂_ui = μ + b_u + b_i + Q_i · (P_u + |N(u)|^{-0.5} · Σ_{j∈N(u)} y_j)
 
 Only ratings ≥ 4★ are used as implicit positives — including 1–3★ reviews would treat negative experiences as preference signal.
 
-Hyperparameters: `n_factors=50`, `n_epochs=50`, `lr=0.005`, `reg=0.015`
+Current selected configuration: `n_factors=40`, `n_epochs=55`, `lr=0.004`, `reg=0.025`
 
 ---
 
@@ -80,7 +80,7 @@ Hyperparameters: `alpha=0.01`, `l1_ratio=0.1`, `max_iter=500`
 #### Bayesian Personalized Ranking (BPR) — Baseline
 Pairwise ranking model that optimises the probability that a user prefers observed item *i* over unobserved item *j*. Only ratings ≥ 4★ are treated as positive interactions.
 
-Hyperparameters: `n_factors=50`, `n_epochs=50`, `lr=0.01`, `reg=0.01`
+Current selected configuration: `n_factors=48`, `n_epochs=40`, `lr=0.01`, `reg=0.01`
 
 #### TextHybrid (SLIM + TF-IDF) — Hybrid
 Reranks a pool of SLIM candidates using a content similarity score derived from TF-IDF review vectors. A user profile is constructed as the mean TF-IDF vector over their rated items. Final score blends the normalized SLIM score with cosine similarity to the user profile.
@@ -95,12 +95,15 @@ Hyperparameters: `max_features=5000`, `alpha=0.3`, `ngram_range=(1,2)`
 
 ## Results
 
+Current status: this run is stable and reproducible, and active tuning is focused on improving Task-A MAE and BPR ranking quality while preserving SLIM performance.
+
 ### Task A — Rating Prediction (lower is better)
 
 | Model | MAE | RMSE |
 |---|---|---|
-| **MF (primary)** | **0.7649** | **1.0752** |
-| SVD++ (baseline) | 0.8510 | 1.1208 |
+| **MF (primary)** | **0.7868** | **1.0804** |
+| SVD++ (baseline) | 0.8125 | 1.1058 |
+| MF/SVD++ blend | 0.7868 | 1.0804 |
 
 MF outperforms SVD++. With only ~9.0 ratings per user on average, the implicit feedback term in SVD++ has insufficient signal to generalise and adds noise instead of benefit.
 
@@ -108,9 +111,11 @@ MF outperforms SVD++. With only ~9.0 ratings per user on average, the implicit f
 
 | Model | P@10 | R@10 | F-measure | NDCG@10 |
 |---|---|---|---|---|
-| BPR (baseline) | 0.0008 | 0.0048 | 0.0012 | 0.0021 |
-| **SLIM (primary)** | **0.0103** | **0.0773** | **0.0173** | **0.0471** |
-| TextHybrid (SLIM + TF-IDF) | 0.0103 | 0.0777 | 0.0174 | 0.0471 |
+| BPR (baseline) | 0.0012 | 0.0084 | 0.0020 | 0.0045 |
+| **SLIM (primary)** | **0.0108** | **0.0846** | **0.0184** | **0.0518** |
+| TextHybrid (SLIM + TF-IDF) | 0.0108 | 0.0850 | 0.0185 | 0.0518 |
+| SLIM-Balanced | 0.0108 | 0.0851 | 0.0185 | 0.0526 |
+| SLIM-Discovery | 0.0100 | 0.0783 | 0.0171 | 0.0496 |
 
 SLIM dominates. The Video Games domain has strong item-item co-purchase patterns (franchise, platform, genre) that sparse item-item linear regression captures directly. BPR trained on 4★/5★ only is the correct implicit-feedback baseline but is limited by dataset sparsity. TextHybrid shows marginal gains over SLIM from TF-IDF review content.
 
@@ -127,6 +132,13 @@ The rating matrix density is 0.0518% — extremely sparse. Key mitigations:
 - **SLIM item-item similarity**: captures co-purchase patterns even with sparse user histories
 - **Popularity fallback**: when SLIM's co-occurrence scores are all zero for a user (no overlap with any item's neighborhood), the recommendation list is padded with globally-popular unseen items — ensuring every user always receives exactly 10 recommendations
 - **BPR cold-start fallback**: completely unknown users (not seen during training) receive popularity-ranked items
+
+Current artifact snapshot also records the latest tuned selection:
+
+- MF best config: `n_factors=32`, `n_epochs=60`, `lr=0.003`, `reg=0.03`, weights=`mild`
+- SVD++ best config: `n_factors=40`, `n_epochs=55`, `lr=0.004`, `reg=0.025`, weights=`mild`
+- BPR best config: `n_factors=48`, `n_epochs=40`, `lr=0.01`, `reg=0.01`
+- Task-A blend alpha: `1.0`
 
 ---
 
